@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import { type CallToolResult, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 import { InMemoryEventStore } from './inMemoryEventStore.js';
 import { createActualClient } from './actual/client.js';
 
@@ -478,7 +479,30 @@ const getServer = (): McpServer => {
 
 const MCP_PORT_ENV = process.env.MCP_PORT;
 const MCP_PORT = MCP_PORT_ENV !== undefined && MCP_PORT_ENV !== '' ? parseInt(MCP_PORT_ENV, 10) : 3000;
+const MCP_BEARER_TOKEN = process.env.MCP_BEARER_TOKEN;
 const app = createMcpExpressApp();
+
+// Optional shared-secret auth (enthusiast-friendly): if MCP_BEARER_TOKEN is set, require it on all MCP routes.
+const authMiddleware = MCP_BEARER_TOKEN !== undefined && MCP_BEARER_TOKEN !== ''
+  ? requireBearerAuth({
+    verifier: {
+      verifyAccessToken: async token => {
+        if (token !== MCP_BEARER_TOKEN) {
+          throw new Error('Invalid token');
+        }
+
+        // Issue a short-lived expiry so the token shape matches the middleware expectations.
+        return {
+          token,
+          clientId: 'local-user',
+          scopes: ['mcp:tools'],
+          expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60
+        };
+      }
+    },
+    requiredScopes: []
+  })
+  : null;
 
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
@@ -542,8 +566,6 @@ const mcpPostHandler = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-app.post('/mcp', (req: Request, res: Response) => { void mcpPostHandler(req, res); });
-
 const mcpGetHandler = async (req: Request, res: Response): Promise<void> => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
   if (sessionId === undefined || sessionId === '' || !transports.has(sessionId)) {
@@ -566,7 +588,13 @@ const mcpGetHandler = async (req: Request, res: Response): Promise<void> => {
   await transport.handleRequest(req, res);
 };
 
-app.get('/mcp', (req: Request, res: Response) => { void mcpGetHandler(req, res); });
+if (authMiddleware !== null) {
+  app.post('/mcp', authMiddleware, (req: Request, res: Response) => { void mcpPostHandler(req, res); });
+  app.get('/mcp', authMiddleware, (req: Request, res: Response) => { void mcpGetHandler(req, res); });
+} else {
+  app.post('/mcp', (req: Request, res: Response) => { void mcpPostHandler(req, res); });
+  app.get('/mcp', (req: Request, res: Response) => { void mcpGetHandler(req, res); });
+}
 
 const mcpDeleteHandler = async (req: Request, res: Response): Promise<void> => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined;
@@ -592,7 +620,11 @@ const mcpDeleteHandler = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-app.delete('/mcp', (req: Request, res: Response) => { void mcpDeleteHandler(req, res); });
+if (authMiddleware !== null) {
+  app.delete('/mcp', authMiddleware, (req: Request, res: Response) => { void mcpDeleteHandler(req, res); });
+} else {
+  app.delete('/mcp', (req: Request, res: Response) => { void mcpDeleteHandler(req, res); });
+}
 
 app.listen(MCP_PORT, (error?: Error) => {
   if (error != null) {

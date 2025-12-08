@@ -10,7 +10,7 @@
     "lint": "eslint \"src/**/*.{ts,tsx}\"",
     "lint:fix": "npm run lint -- --fix",
     "docker:build": "podman build -t actual-budget-mcp-server .",
-    "docker:run": "npm run docker:build && podman run --rm -p 3000:3000 -e ACTUAL_SERVER_URL=\"${ACTUAL_SERVER_URL}\" -e ACTUAL_PASSWORD=\"${ACTUAL_PASSWORD}\" -e ACTUAL_SYNC_ID=\"${ACTUAL_SYNC_ID}\" actual-budget-mcp-server"
+    "docker:run": "npm run docker:build && podman run --rm -p 3000:3000 -e ACTUAL_SERVER_URL=\"${ACTUAL_SERVER_URL}\" -e ACTUAL_PASSWORD=\"${ACTUAL_PASSWORD}\" -e ACTUAL_SYNC_ID=\"${ACTUAL_SYNC_ID}\" -e MCP_BEARER=\"${MCP_BEARER}\" actual-budget-mcp-server"
   },
   "dependencies": {
     "@actual-app/api": "^25.12.0",

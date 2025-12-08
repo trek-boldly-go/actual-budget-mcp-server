@@ -44,9 +44,18 @@ docker run --rm -p 3000:3000 \
 
 ### Environment variables
 - `MCP_PORT` (default `3000`)
+- `MCP_BEARER_TOKEN` (optional) set to enable shared-secret auth; when set, clients must send `Authorization: Bearer <token>` on all `/mcp` requests.
 - `ACTUAL_SERVER_URL`, `ACTUAL_PASSWORD`, `ACTUAL_SYNC_ID` (required for real Actual usage)
 - `ACTUAL_DATA_DIR` (default `/app/.actual-data` in Docker)
 - `ACTUAL_ENCRYPTION_PASS` (optional)
+
+### Authentication
+Auth is off by default. To require a token on every MCP call while keeping setup easy:
+1. Choose a secret and set `MCP_BEARER_TOKEN="your-long-random-token"` in your environment (or `.env` when using a process manager).
+2. Restart the server.
+3. Configure your MCP client to send `Authorization: Bearer your-long-random-token` to the `/mcp` endpoint. Most clients let you set a header in their server config.
+
+The server validates the token on every POST/GET/DELETE to `/mcp` and will return 401 with a `WWW-Authenticate` header if the header is missing or the token is wrong. Remove `MCP_BEARER_TOKEN` to go back to unauthenticated mode.
 
 ### Development notes
 - Lint: `npm run lint` (standard-with-typescript, semicolons enforced)
