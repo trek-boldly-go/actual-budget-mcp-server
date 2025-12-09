@@ -1,4 +1,4 @@
-import { type Request, type Response } from 'express';
+import { type Request, type RequestHandler, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod/v4';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -6,10 +6,198 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import { type CallToolResult, isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { getOAuthProtectedResourceMetadataUrl, mcpAuthMetadataRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { type OAuthMetadata } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { InMemoryEventStore } from './inMemoryEventStore.js';
 import { createActualClient } from './actual/client.js';
 
 const actualClient = createActualClient();
+
+type AuthMode = 'none' | 'bearer' | 'oauth';
+
+const MCP_PORT_ENV = process.env.MCP_PORT;
+const MCP_PORT = MCP_PORT_ENV !== undefined && MCP_PORT_ENV !== '' ? parseInt(MCP_PORT_ENV, 10) : 3000;
+const MCP_PUBLIC_URL_ENV = process.env.MCP_PUBLIC_URL;
+const MCP_PUBLIC_URL = MCP_PUBLIC_URL_ENV !== undefined && MCP_PUBLIC_URL_ENV !== ''
+  ? MCP_PUBLIC_URL_ENV
+  : `http://localhost:${MCP_PORT}/mcp`;
+const MCP_BEARER_TOKEN = process.env.MCP_BEARER_TOKEN;
+const MCP_AUTH_MODE = (process.env.MCP_AUTH_MODE ?? 'bearer').toLowerCase() as AuthMode;
+const MCP_OAUTH_ISSUER_URL = process.env.MCP_OAUTH_ISSUER_URL;
+const MCP_OAUTH_CLIENT_ID = process.env.MCP_OAUTH_CLIENT_ID;
+const MCP_OAUTH_CLIENT_SECRET = process.env.MCP_OAUTH_CLIENT_SECRET;
+const MCP_OAUTH_INTROSPECTION_URL = process.env.MCP_OAUTH_INTROSPECTION_URL;
+const MCP_OAUTH_AUDIENCE = process.env.MCP_OAUTH_AUDIENCE;
+
+const ensureValidAuthMode = (mode: string): AuthMode => {
+  const normalized = mode.toLowerCase();
+  if (normalized === 'none' || normalized === 'bearer' || normalized === 'oauth') {
+    return normalized;
+  }
+  throw new Error(`Unknown MCP_AUTH_MODE "${mode}". Use one of: none, bearer, oauth.`);
+};
+
+const buildWellKnownCandidates = (issuer: URL): URL[] => {
+  const hasPath = issuer.pathname !== undefined && issuer.pathname !== '/' && issuer.pathname !== '';
+  const trimmedPath = hasPath ? issuer.pathname : '';
+  const withPath = [
+    `/.well-known/oauth-authorization-server${trimmedPath}`,
+    `/.well-known/openid-configuration${trimmedPath}`
+  ];
+  const rootOnly = [
+    '/.well-known/oauth-authorization-server',
+    '/.well-known/openid-configuration'
+  ];
+
+  return [...withPath, ...rootOnly].map(path => new URL(path, issuer));
+};
+
+const discoverOAuthMetadata = async (issuer: URL): Promise<OAuthMetadata> => {
+  const attempts: string[] = [];
+
+  for (const candidate of buildWellKnownCandidates(issuer)) {
+    try {
+      const response = await fetch(candidate);
+      if (!response.ok) {
+        attempts.push(`${candidate.href} (HTTP ${response.status})`);
+        continue;
+      }
+      const json = (await response.json()) as OAuthMetadata;
+      return json;
+    } catch (error) {
+      attempts.push(`${candidate.href} (${String(error)})`);
+    }
+  }
+
+  throw new Error(`Unable to load OAuth metadata from issuer ${issuer.href}. Tried: ${attempts.join('; ')}`);
+};
+
+const audienceMatches = (aud: unknown, expected: string | undefined): boolean => {
+  if (expected === undefined || expected === '') {
+    return true;
+  }
+
+  if (typeof aud === 'string') {
+    return aud === expected;
+  }
+
+  if (Array.isArray(aud)) {
+    return aud.some(item => audienceMatches(item, expected));
+  }
+
+  return false;
+};
+
+interface AuthContext {
+  mode: AuthMode
+  middleware: RequestHandler | null
+  oauthMetadata?: OAuthMetadata
+}
+
+const buildAuthContext = async (): Promise<AuthContext> => {
+  const mode = ensureValidAuthMode(MCP_AUTH_MODE);
+  const mcpPublicUrl = new URL(MCP_PUBLIC_URL);
+
+  if (mode === 'none') {
+    console.warn('MCP authentication disabled via MCP_AUTH_MODE=none.');
+    return { mode, middleware: null };
+  }
+
+  if (mode === 'bearer') {
+    if (MCP_BEARER_TOKEN === undefined || MCP_BEARER_TOKEN === '') {
+      throw new Error('MCP_BEARER_TOKEN is required when MCP_AUTH_MODE=bearer. Set MCP_AUTH_MODE=none to disable auth.');
+    }
+
+    const middleware = requireBearerAuth({
+      verifier: {
+        verifyAccessToken: async (token: string) => {
+          if (token !== MCP_BEARER_TOKEN) {
+            throw new Error('Invalid token');
+          }
+
+          return {
+            token,
+            clientId: 'local-user',
+            scopes: ['mcp:tools'],
+            expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60
+          };
+        }
+      },
+      requiredScopes: []
+    });
+
+    return { mode, middleware };
+  }
+
+  if (mode === 'oauth') {
+    if (MCP_OAUTH_ISSUER_URL === undefined || MCP_OAUTH_ISSUER_URL === '') {
+      throw new Error('MCP_OAUTH_ISSUER_URL is required when MCP_AUTH_MODE=oauth.');
+    }
+    if (MCP_OAUTH_CLIENT_ID === undefined || MCP_OAUTH_CLIENT_ID === '') {
+      throw new Error('MCP_OAUTH_CLIENT_ID is required when MCP_AUTH_MODE=oauth.');
+    }
+    if (MCP_OAUTH_CLIENT_SECRET === undefined || MCP_OAUTH_CLIENT_SECRET === '') {
+      throw new Error('MCP_OAUTH_CLIENT_SECRET is required when MCP_AUTH_MODE=oauth.');
+    }
+
+    const issuer = new URL(MCP_OAUTH_ISSUER_URL);
+    const oauthMetadata = await discoverOAuthMetadata(issuer);
+    const introspectionEndpoint = MCP_OAUTH_INTROSPECTION_URL ?? oauthMetadata.introspection_endpoint;
+
+    if (introspectionEndpoint === undefined || introspectionEndpoint === '') {
+      throw new Error('OAuth metadata is missing an introspection_endpoint. Set MCP_OAUTH_INTROSPECTION_URL to override.');
+    }
+
+    const verifier = {
+      verifyAccessToken: async (token: string) => {
+        const response = await fetch(introspectionEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Authorization: `Basic ${Buffer.from(`${MCP_OAUTH_CLIENT_ID}:${MCP_OAUTH_CLIENT_SECRET}`).toString('base64')}`
+          },
+          body: new URLSearchParams({
+            token,
+            token_type_hint: 'access_token',
+            resource: mcpPublicUrl.href
+          }).toString()
+        });
+
+        if (!response.ok) {
+          const text = await response.text().catch(() => '');
+          throw new Error(`Token introspection failed: HTTP ${response.status} ${text}`);
+        }
+
+        const data = await response.json() as Record<string, unknown>;
+        if (data.active !== true) {
+          throw new Error('Token is not active');
+        }
+
+        if (!audienceMatches(data.aud, MCP_OAUTH_AUDIENCE)) {
+          throw new Error('Token audience does not match MCP_OAUTH_AUDIENCE');
+        }
+
+        return {
+          token,
+          clientId: typeof data.client_id === 'string' ? data.client_id : MCP_OAUTH_CLIENT_ID,
+          scopes: typeof data.scope === 'string' ? data.scope.split(' ') : [],
+          expiresAt: typeof data.exp === 'number' ? data.exp : undefined
+        };
+      }
+    };
+
+    const middleware = requireBearerAuth({
+      verifier,
+      requiredScopes: [],
+      resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpPublicUrl)
+    });
+
+    return { mode, middleware, oauthMetadata };
+  }
+
+  // Unreachable, satisfied by exhaustive checks above.
+  return { mode, middleware: null };
+};
 
 const registerTools = (server: McpServer): void => {
   // Get Accounts
@@ -477,32 +665,20 @@ const getServer = (): McpServer => {
   return server;
 };
 
-const MCP_PORT_ENV = process.env.MCP_PORT;
-const MCP_PORT = MCP_PORT_ENV !== undefined && MCP_PORT_ENV !== '' ? parseInt(MCP_PORT_ENV, 10) : 3000;
-const MCP_BEARER_TOKEN = process.env.MCP_BEARER_TOKEN;
 const app = createMcpExpressApp();
+const mcpPublicUrl = new URL(MCP_PUBLIC_URL);
+const authContext = await buildAuthContext();
 
-// Optional shared-secret auth (enthusiast-friendly): if MCP_BEARER_TOKEN is set, require it on all MCP routes.
-const authMiddleware = MCP_BEARER_TOKEN !== undefined && MCP_BEARER_TOKEN !== ''
-  ? requireBearerAuth({
-    verifier: {
-      verifyAccessToken: async token => {
-        if (token !== MCP_BEARER_TOKEN) {
-          throw new Error('Invalid token');
-        }
+console.log(`MCP auth mode: ${authContext.mode}`);
 
-        // Issue a short-lived expiry so the token shape matches the middleware expectations.
-        return {
-          token,
-          clientId: 'local-user',
-          scopes: ['mcp:tools'],
-          expiresAt: Math.floor(Date.now() / 1000) + 24 * 60 * 60
-        };
-      }
-    },
-    requiredScopes: []
-  })
-  : null;
+if (authContext.oauthMetadata !== undefined) {
+  app.use(mcpAuthMetadataRouter({
+    oauthMetadata: authContext.oauthMetadata,
+    resourceServerUrl: mcpPublicUrl,
+    scopesSupported: ['mcp:tools'],
+    resourceName: 'Actual Budget MCP Server'
+  }));
+}
 
 const transports = new Map<string, StreamableHTTPServerTransport>();
 
@@ -588,9 +764,9 @@ const mcpGetHandler = async (req: Request, res: Response): Promise<void> => {
   await transport.handleRequest(req, res);
 };
 
-if (authMiddleware !== null) {
-  app.post('/mcp', authMiddleware, (req: Request, res: Response) => { void mcpPostHandler(req, res); });
-  app.get('/mcp', authMiddleware, (req: Request, res: Response) => { void mcpGetHandler(req, res); });
+if (authContext.middleware !== null) {
+  app.post('/mcp', authContext.middleware, (req: Request, res: Response) => { void mcpPostHandler(req, res); });
+  app.get('/mcp', authContext.middleware, (req: Request, res: Response) => { void mcpGetHandler(req, res); });
 } else {
   app.post('/mcp', (req: Request, res: Response) => { void mcpPostHandler(req, res); });
   app.get('/mcp', (req: Request, res: Response) => { void mcpGetHandler(req, res); });
@@ -620,8 +796,8 @@ const mcpDeleteHandler = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-if (authMiddleware !== null) {
-  app.delete('/mcp', authMiddleware, (req: Request, res: Response) => { void mcpDeleteHandler(req, res); });
+if (authContext.middleware !== null) {
+  app.delete('/mcp', authContext.middleware, (req: Request, res: Response) => { void mcpDeleteHandler(req, res); });
 } else {
   app.delete('/mcp', (req: Request, res: Response) => { void mcpDeleteHandler(req, res); });
 }
