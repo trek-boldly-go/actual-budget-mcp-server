@@ -50,7 +50,7 @@ docker compose up -d
 
 Services:
 - `mcp` (ports `3000:3000`): runs with `MCP_AUTH_MODE=oauth` and introspects tokens against Keycloak.
-- `keycloak` (ports `8080:8080`): imports `docker/keycloak/realm-export/actual-mcp-realm.template.json` rendered by `keycloak-realm-builder`.
+- `keycloak` (ports `8080:8080`): imports `docker/keycloak/realm-export/actual-mcp-realm.template.json` rendered by `keycloak-realm-builder`. If you change `KEYCLOAK_REALM`, also override the MCP issuer envs (compose defaults do not nest).
 - `keycloak-realm-builder`: renders the realm template with env vars before Keycloak starts.
 
 Images and platforms:
@@ -88,10 +88,12 @@ Add your MCP client’s exact callback if it differs.
 - `MCP_AUTH_MODE` (`bearer` default) choose `none`, `bearer`, or `oauth`
 - `MCP_BEARER_TOKEN` required when `MCP_AUTH_MODE=bearer`
 - OAuth mode:
-  - `MCP_OAUTH_ISSUER_URL` (e.g., `https://keycloak.example.com/realms/actual-mcp`)
+  - `MCP_OAUTH_INTERNAL_ISSUER_URL` (e.g., `http://keycloak:8080/realms/actual-mcp`) used by the server for discovery/introspection (defaults to `MCP_OAUTH_ISSUER_URL`)
+  - `MCP_OAUTH_ISSUER_URL` (back-compat) falls back to internal issuer when `MCP_OAUTH_INTERNAL_ISSUER_URL` is unset. If you change `KEYCLOAK_REALM`, update these explicitly; compose does not nest defaults.
   - `MCP_OAUTH_CLIENT_ID` / `MCP_OAUTH_CLIENT_SECRET` (used for token introspection)
   - `MCP_OAUTH_INTROSPECTION_URL` (optional override; defaults to issuer metadata)
   - `MCP_OAUTH_AUDIENCE` (optional audience/resource value to enforce)
+  - `MCP_OAUTH_PUBLIC_ISSUER_URL` (optional) public-facing issuer to advertise in metadata; server still uses the internal issuer for discovery/introspection
   - `MCP_DANGEROUSLY_ALLOW_INSECURE_ISSUER_URL` (set to `true` for HTTP issuers in dev only)
 - Actual configuration: `ACTUAL_SERVER_URL`, `ACTUAL_PASSWORD`, `ACTUAL_SYNC_ID` (required for real Actual usage)
 - `ACTUAL_DATA_DIR` (default `/app/.actual-data` in Docker)

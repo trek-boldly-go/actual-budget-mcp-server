@@ -2,18 +2,21 @@ version: '3.9'
 
 services:
   mcp:
-    image: ghcr.io/trek-boldly-go/actual-budget-mcp-server:latest
+    image: ghcr.io/trek-boldly-go/actual-budget-mcp-server:local
     build:
       context: .
       dockerfile: Dockerfile
     depends_on:
-      - keycloak
+      keycloak:
+        condition: service_healthy
     platform: ${MCP_DOCKER_PLATFORM:-linux/amd64}
     environment:
       MCP_PORT: ${MCP_PORT:-3000}
       MCP_AUTH_MODE: ${MCP_AUTH_MODE:-oauth}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:3000/mcp}
-      MCP_OAUTH_ISSUER_URL: ${MCP_OAUTH_ISSUER_URL:-http://keycloak:8080/realms/actual-mcp}
+      # Compose does not support nested defaults; override these explicitly if you change KEYCLOAK_REALM.
+      MCP_OAUTH_INTERNAL_ISSUER_URL: ${MCP_OAUTH_INTERNAL_ISSUER_URL:-http://keycloak:8080/realms/actual-mcp/}
+      MCP_OAUTH_PUBLIC_ISSUER_URL: ${MCP_OAUTH_PUBLIC_ISSUER_URL:-http://localhost:8080/realms/actual-mcp/}
       MCP_OAUTH_CLIENT_ID: ${KEYCLOAK_INTROSPECTION_CLIENT_ID:-actual-mcp-introspection}
       MCP_OAUTH_CLIENT_SECRET: ${KEYCLOAK_INTROSPECTION_CLIENT_SECRET:-actual-mcp-introspection-secret}
       MCP_OAUTH_AUDIENCE: ${MCP_OAUTH_AUDIENCE:-}
@@ -22,17 +25,23 @@ services:
       ACTUAL_SERVER_URL: ${ACTUAL_SERVER_URL:-https://your-actual-server}
       ACTUAL_PASSWORD: ${ACTUAL_PASSWORD:-changeme}
       ACTUAL_SYNC_ID: ${ACTUAL_SYNC_ID:-changeme}
+      LOG_LEVEL: "info"
     ports:
       - '${MCP_PORT:-3000}:3000'
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
-    command: start-dev --http-port=8080 --hostname-strict=false --import-realm
+    command: start-dev --http-port=8080 --hostname=keycloak --hostname-strict=false --import-realm
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
     depends_on:
       - keycloak-realm-builder
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/realms/master"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     volumes:
       - keycloak-import:/opt/keycloak/data/import
     ports:
