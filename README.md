@@ -1,15 +1,15 @@
 ## Simple Streamable HTTP MCP Server
 
-A minimal Model Context Protocol (MCP) HTTP server for the Actual Budget API. It exposes the Actual tools over HTTP with server-sent events for streaming responses. The Actual client is stubbed/in-memory by default—swap in real Actual API calls to make it production-ready.
+A minimal Model Context Protocol (MCP) HTTP server for the Actual Budget API. It exposes the Actual tools over HTTP with server-sent events for streaming responses.
 
 ### What it does
 - Runs an MCP server at `/mcp` with streaming (SSE) support.
 - Provides tool endpoints for Accounts, Transactions, Categories, Payees, Rules, reporting, and AI-style summaries.
-- Current limitation: all mutating tools (`add-transaction`, `update-transaction`, `delete-*`, etc.) are stubbed and return a read-only notice. Only read-style operations are functional.
 
 ### Prerequisites
 - Node 18+ (matches the SDK requirement)
 - npm
+- Actual credentials: `ACTUAL_SERVER_URL`, `ACTUAL_PASSWORD`, `ACTUAL_SYNC_ID` (required to start the server)
 
 ### Install
 ```bash
@@ -18,6 +18,9 @@ npm install
 
 ### Run (dev)
 ```bash
+export ACTUAL_SERVER_URL=https://your-actual
+export ACTUAL_PASSWORD=...
+export ACTUAL_SYNC_ID=... # Find your sync_id in your Actual Server advanced settings
 npm run dev
 ```
 The server listens on `http://localhost:3000/mcp` by default.
@@ -65,7 +68,7 @@ Environment knobs (with defaults):
 - `KEYCLOAK_DEMO_USER` / `KEYCLOAK_DEMO_PASSWORD` (default `demo-user` / `demo-pass`)
 - `KEYCLOAK_DEMO_FIRST_NAME` / `KEYCLOAK_DEMO_LAST_NAME` (default `Demo` / `User`)
 - `KEYCLOAK_ADMIN` / `KEYCLOAK_ADMIN_PASSWORD` (default `admin` / `admin`)
-- Actual credentials: `ACTUAL_SERVER_URL`, `ACTUAL_PASSWORD`, `ACTUAL_SYNC_ID`
+- Actual credentials (required): `ACTUAL_SERVER_URL`, `ACTUAL_PASSWORD`, `ACTUAL_SYNC_ID`
 
 Getting a token for testing:
 ```bash
@@ -98,6 +101,7 @@ Add your MCP client’s exact callback if it differs.
 - Actual configuration: `ACTUAL_SERVER_URL`, `ACTUAL_PASSWORD`, `ACTUAL_SYNC_ID` (required for real Actual usage)
 - `ACTUAL_DATA_DIR` (default `/app/.actual-data` in Docker)
 - `ACTUAL_ENCRYPTION_PASS` (optional)
+- Amounts: all tools and rules use the currency’s smallest unit (e.g., cents for USD).
 
 ### Authentication
 The server now supports three modes via `MCP_AUTH_MODE` (default `bearer`):
@@ -121,4 +125,4 @@ Quick OAuth (Keycloak) flow:
 - CI publishes Docker images to GHCR on `main` pushes (`.github/workflows/ci.yml`).
 
 ### Where to wire in the real Actual API
-- `src/actual/client.ts` currently uses an in-memory stub with optional Actual API initialization. Replace stubbed sections with Actual SDK calls as needed.
+- `src/actual/client.ts` connects directly to your Actual server. All reads and writes are live; provide required env vars before starting.

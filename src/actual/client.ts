@@ -16,6 +16,20 @@ import { type TransactionEntity } from '@actual-app/api/@types/loot-core/src/typ
 import { type RuleEntity } from '@actual-app/api/@types/loot-core/src/types/models/rule.js';
 import { logger } from '../logger.js';
 
+const getLastFullMonthRange = (): { startDate: string, endDate: string, label: string, daysInMonth: number } => {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0));
+
+  const toDate = (d: Date): string => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  return {
+    startDate: toDate(start),
+    endDate: toDate(end),
+    label: `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, '0')}`,
+    daysInMonth: end.getUTCDate()
+  };
+};
+
 export class ActualClient {
   private ready: Promise<void>;
   private shutdownPromise?: Promise<void>;
@@ -335,13 +349,11 @@ export class ActualClient {
 
   async createRule (rule: Omit<RuleEntity, 'id'>): Promise<RuleEntity> {
     await this.ensureReady();
-    const tombstoneValue = (rule.tombstone ?? false) ? 1 : 0;
     const payload: Omit<RuleEntity, 'id'> = {
       stage: rule.stage ?? null,
       conditionsOp: rule.conditionsOp ?? 'and',
       conditions: rule.conditions ?? [],
-      actions: rule.actions ?? [],
-      tombstone: tombstoneValue as any
+      actions: rule.actions ?? []
     };
     const created = await api.createRule(payload);
     return created;
@@ -378,15 +390,59 @@ export class ActualClient {
 
   async generateFinancialInsights (): Promise<string> {
     await this.ensureReady();
-    // Toy example; replace with real analysis.
-    const summary = await this.getMonthlySummary(2025, 12);
-    return `Income: ${summary.totalIncome / 100}, Expenses: ${summary.totalExpenses / 100}, Savings: ${summary.netSavings / 100}`;
+    const { startDate, endDate, label, daysInMonth } = getLastFullMonthRange();
+    const txns = await this.getTransactions({ startDate, endDate });
+
+    const income = txns.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
+    const expenses = txns.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const net = income - expenses;
+    const savingsRate = income > 0 ? net / income : 0;
+    const avgDailySpend = Math.round(expenses / daysInMonth);
+
+    const categories = (await api.getCategories()).filter((c): c is APICategoryEntity => 'group_id' in c);
+    const categorySpend = new Map<string, number>();
+    for (const txn of txns) {
+      if (txn.amount >= 0) continue;
+      if (txn.category == null || txn.category === '') continue;
+      categorySpend.set(txn.category, (categorySpend.get(txn.category) ?? 0) + Math.abs(txn.amount));
+    }
+    const topCategories = [...categorySpend.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([categoryId, total]) => `${categories.find(c => c.id === categoryId)?.name ?? 'Unknown'}: ${total}`);
+
+    const uncategorized = txns.filter(t => t.amount < 0 && (t.category == null || t.category === ''));
+    const uncategorizedTotal = uncategorized.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+    const lines = [
+      `Period: ${label} (${startDate} to ${endDate})`,
+      'Amounts are shown in the currency\'s smallest unit (e.g., if USD then values are in cents, not dollars).',
+      `Income: ${income}, Expenses: ${expenses}, Net savings: ${net} (Savings rate: ${(savingsRate * 100).toFixed(1)}%)`,
+      `Average daily spend: ${avgDailySpend}`,
+      topCategories.length > 0 ? `Top spending categories: ${topCategories.join('; ')}` : 'Top spending categories: none found',
+      uncategorized.length > 0
+        ? `Hygiene: ${uncategorized.length} uncategorized transactions totaling ${uncategorizedTotal}`
+        : 'Hygiene: no uncategorized transactions'
+    ];
+
+    // const suggestions: string[] = [];
+    // if (uncategorized.length > 0) suggestions.push('Categorize remaining uncategorized expenses to keep reports accurate');
+    // if (topCategories.length > 0) suggestions.push('Review top spending categories for quick wins (e.g., trim 5-10%)');
+    // if (savingsRate < 0.1) suggestions.push('Savings rate is low; consider a fixed transfer to savings right after payday');
+    // if (suggestions.length === 0) suggestions.push('Spending hygiene looks good; maintain current habits');
+
+    // lines.push(`Suggestions: ${suggestions.join('; ')}`);
+    return lines.join('\n');
   }
 
   async generateBudgetReview (year: number, month: number): Promise<string> {
     await this.ensureReady();
     const summary = await this.getMonthlySummary(year, month);
-    return `Review ${year}-${String(month).padStart(2, '0')}: income ${summary.totalIncome / 100}, expenses ${summary.totalExpenses / 100}, savings ${summary.netSavings / 100}`;
+    const monthLabel = `${year}-${String(month).padStart(2, '0')}`;
+    return [
+      `Review ${monthLabel} (amounts are in the currency's smallest unit; e.g., cents for USD):`,
+      `Income: ${summary.totalIncome}, Expenses: ${summary.totalExpenses}, Savings: ${summary.netSavings}`
+    ].join(' ');
   }
 }
 

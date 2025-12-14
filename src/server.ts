@@ -11,6 +11,7 @@ import { logger } from './logger.js';
 import { MCP_PORT, MCP_PUBLIC_URL } from './config.js';
 import { buildAuthContext } from './auth.js';
 import { registerTools } from './tools/index.js';
+import { registerResourcesAndPrompts } from './resources.js';
 
 const actualClient = createActualClient();
 
@@ -27,6 +28,7 @@ const getServer = (): McpServer => {
   );
 
   registerTools(server, actualClient);
+  registerResourcesAndPrompts(server, actualClient);
   return server;
 };
 

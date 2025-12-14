@@ -365,8 +365,7 @@ export const registerTools = (server: McpServer, actualClient: ActualClient): vo
         stage: z.enum(['pre', 'post']).nullish().describe('When to run the rule (pre/post)'),
         conditionsOp: z.enum(['and', 'or']).default('and'),
         conditions: z.array(RuleConditionSchema).describe('Rule conditions; see Actual rule schema'),
-        actions: z.array(RuleActionSchema).describe('Rule actions; see Actual rule schema'),
-        tombstone: z.boolean().nullish()
+        actions: z.array(RuleActionSchema).describe('Rule actions; see Actual rule schema')
       }
     },
     async args => {
@@ -374,8 +373,7 @@ export const registerTools = (server: McpServer, actualClient: ActualClient): vo
         stage: args.stage ?? null,
         conditionsOp: args.conditionsOp ?? 'and',
         conditions: args.conditions,
-        actions: args.actions,
-        tombstone: args.tombstone ?? false
+        actions: args.actions
       });
       return { content: [{ type: 'text', text: `Created rule ${created.id}` }] };
     }
@@ -392,8 +390,7 @@ export const registerTools = (server: McpServer, actualClient: ActualClient): vo
         stage: z.enum(['pre', 'post']).nullish(),
         conditionsOp: z.enum(['and', 'or']).nullish(),
         conditions: z.array(RuleConditionSchema).nullish(),
-        actions: z.array(RuleActionSchema).nullish(),
-        tombstone: z.boolean().nullish()
+        actions: z.array(RuleActionSchema).nullish()
       }
     },
     async args => {
@@ -401,8 +398,7 @@ export const registerTools = (server: McpServer, actualClient: ActualClient): vo
         stage: args.stage ?? undefined,
         conditionsOp: args.conditionsOp ?? undefined,
         conditions: args.conditions ?? undefined,
-        actions: args.actions ?? undefined,
-        tombstone: args.tombstone ?? undefined
+        actions: args.actions ?? undefined
       });
       return { content: [{ type: 'text', text: `Updated rule ${updated.id}` }] };
     }
