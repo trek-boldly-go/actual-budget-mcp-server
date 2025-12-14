@@ -1,0 +1,29 @@
+export type AuthMode = 'none' | 'bearer' | 'oauth';
+
+const MCP_PORT_ENV = process.env.MCP_PORT;
+export const MCP_PORT = MCP_PORT_ENV !== undefined && MCP_PORT_ENV !== '' ? parseInt(MCP_PORT_ENV, 10) : 3000;
+
+const MCP_PUBLIC_URL_ENV = process.env.MCP_PUBLIC_URL;
+export const MCP_PUBLIC_URL = MCP_PUBLIC_URL_ENV !== undefined && MCP_PUBLIC_URL_ENV !== ''
+  ? MCP_PUBLIC_URL_ENV
+  : `http://localhost:${MCP_PORT}/mcp`;
+
+export const MCP_BEARER_TOKEN = process.env.MCP_BEARER_TOKEN;
+export const MCP_AUTH_MODE = (process.env.MCP_AUTH_MODE ?? 'bearer').toLowerCase() as AuthMode;
+export const MCP_OAUTH_ISSUER_URL = process.env.MCP_OAUTH_ISSUER_URL;
+export const MCP_OAUTH_INTERNAL_ISSUER_URL = process.env.MCP_OAUTH_INTERNAL_ISSUER_URL ?? MCP_OAUTH_ISSUER_URL;
+export const MCP_OAUTH_PUBLIC_ISSUER_URL = process.env.MCP_OAUTH_PUBLIC_ISSUER_URL ?? MCP_OAUTH_ISSUER_URL;
+export const MCP_OAUTH_CLIENT_ID = process.env.MCP_OAUTH_CLIENT_ID;
+export const MCP_OAUTH_CLIENT_SECRET = process.env.MCP_OAUTH_CLIENT_SECRET;
+export const MCP_OAUTH_INTROSPECTION_URL = process.env.MCP_OAUTH_INTROSPECTION_URL;
+export const MCP_OAUTH_AUDIENCE = process.env.MCP_OAUTH_AUDIENCE;
+
+const MCP_OAUTH_DISCOVERY_RETRIES_ENV = process.env.MCP_OAUTH_DISCOVERY_RETRIES;
+export const MCP_OAUTH_DISCOVERY_RETRIES = MCP_OAUTH_DISCOVERY_RETRIES_ENV !== undefined && MCP_OAUTH_DISCOVERY_RETRIES_ENV !== ''
+  ? parseInt(MCP_OAUTH_DISCOVERY_RETRIES_ENV, 10)
+  : 30;
+
+const MCP_OAUTH_DISCOVERY_RETRY_DELAY_MS_ENV = process.env.MCP_OAUTH_DISCOVERY_RETRY_DELAY_MS;
+export const MCP_OAUTH_DISCOVERY_RETRY_DELAY_MS = MCP_OAUTH_DISCOVERY_RETRY_DELAY_MS_ENV !== undefined && MCP_OAUTH_DISCOVERY_RETRY_DELAY_MS_ENV !== ''
+  ? parseInt(MCP_OAUTH_DISCOVERY_RETRY_DELAY_MS_ENV, 10)
+  : 2000;
